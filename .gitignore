@@ -4,3 +4,6 @@
 *.mod
 *.order
 sniff
+Module.symvers
+*.mod.c
+.swp
