@@ -154,6 +154,11 @@ int main(int argc, char *argv[])
 
     tmp = gethostbyname(HOST);
 
+    if (tmp == NULL) {
+        printf("gethostbyname(%s) failed: %s\n", HOST, strerror(errno));
+        return 1;
+    }
+
     i = 0;
     printf("IP addresses for %s:\n", HOST);
     
