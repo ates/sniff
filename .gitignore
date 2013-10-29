@@ -6,5 +6,5 @@
 sniff
 Module.symvers
 *.mod.c
-.swp
+*.swp
 *.cmd
