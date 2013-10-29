@@ -112,20 +112,83 @@ static void process_packet(const struct pfring_pkthdr *h, const u_char *p, const
     print_payload(p, h->len);
 }
 
+static void filter_stats(const u_int16_t rule_id)
+{
+    u_int len;
+    struct http_filter_stats stats;
+
+    len = sizeof(stats);
+
+    pfring_get_filtering_rule_stats(ring, rule_id, (char *)&stats, &len);
+
+    printf("Filter ID: %d\nPackets: %u\nBytes: %u\n",
+        rule_id, (unsigned int)stats.pkts, (unsigned int)stats.bytes);
+}
+
+static void ring_stats(void)
+{
+    pfring_stat ring_stats;
+
+    if (pfring_stats(ring, &ring_stats) >= 0) {
+        printf("Recv: %u, Drop: %u\n",
+            (unsigned int)ring_stats.recv,
+            (unsigned int)ring_stats.drop);
+    }
+}
+
 static void sigproc(int sig)
 {
     printf("Got signal %d\n", sig);
+
+    filter_stats(5);
+    filter_stats(6);
+
+    ring_stats();
+
     pfring_close(ring);
+}
+
+static int add_filtering_rule(const u_int16_t rule_id, const char *hostname, const uint8_t method)
+{
+    int i = 0;
+    filtering_rule rule;
+    struct http_filter *filter;
+    struct hostent *tmp = 0;
+
+    tmp = gethostbyname(hostname);
+
+    if (tmp == NULL) {
+        printf("gethostbyname(%s) failed: %s\n", hostname, strerror(errno));
+        return 1;
+    }
+
+    memset(&rule, 0, sizeof(rule));
+
+    rule.rule_id = rule_id;
+    rule.rule_action = forward_packet_and_stop_rule_evaluation;
+    rule.plugin_action.plugin_id = HTTP_PLUGIN_ID;
+    rule.core_fields.proto = 6; /* TCP */
+    rule.core_fields.dport_low = 80;
+    rule.core_fields.dport_high = 80;
+    rule.extended_fields.filter_plugin_id = HTTP_PLUGIN_ID;
+    filter = (struct http_filter *)rule.extended_fields.filter_plugin_data;
+
+    printf("IP addresses for %s:\n", hostname);
+
+    while(tmp->h_addr_list[i] != NULL) {
+        printf("%u\n", ntohl(*((uint32_t *) tmp->h_addr_list[i])));
+        filter->hosts[i] = ntohl(*((uint32_t *) tmp->h_addr_list[i]));
+        i++;
+    }
+
+    filter->method = method;
+
+    return pfring_add_filtering_rule(ring, &rule);
 }
 
 int main(int argc, char *argv[])
 {
-    int i = 0;
     u_int32_t version;
-    filtering_rule rule;
-    struct http_filter *filter;
-
-    struct hostent *tmp = 0;
 
     if ((ring = pfring_open(DEVICE, SNAPLEN, PF_RING_PROMISC)) == NULL)
     {
@@ -141,36 +204,13 @@ int main(int argc, char *argv[])
 
     pfring_toggle_filtering_policy(ring, 0); /* Default to drop */
 
-    memset(&rule, 0, sizeof(rule));
-    
-    rule.rule_id = 5;
-    rule.rule_action = forward_packet_and_stop_rule_evaluation;
-    rule.plugin_action.plugin_id = HTTP_PLUGIN_ID;
-    rule.core_fields.proto = 6; /* TCP */
-    rule.core_fields.dport_low = 80;
-    rule.core_fields.dport_high = 80;
-    rule.extended_fields.filter_plugin_id = HTTP_PLUGIN_ID; 
-    filter = (struct http_filter *)rule.extended_fields.filter_plugin_data;
-
-    tmp = gethostbyname(HOST);
-
-    if (tmp == NULL) {
-        printf("gethostbyname(%s) failed: %s\n", HOST, strerror(errno));
+    if (add_filtering_rule(5, "ya.ru", GET) < 0) {
+        printf("pfring_add_filtering_rule(2) failed: %s\n", strerror(errno));
         return 1;
-    }
+    } else
+        printf("Rule added successfully...\n");
 
-    i = 0;
-    printf("IP addresses for %s:\n", HOST);
-    
-    while(tmp->h_addr_list[i] != NULL) {
-        printf("%u\n", ntohl(*((uint32_t *) tmp->h_addr_list[i])));
-        filter->hosts[i] = ntohl(*((uint32_t *) tmp->h_addr_list[i]));
-        i++;
-    }
-
-    filter->method = 1; // GET
-
-    if (pfring_add_filtering_rule(ring, &rule) < 0) {
+    if (add_filtering_rule(6, "google.com", POST) < 0) {
         printf("pfring_add_filtering_rule(2) failed: %s\n", strerror(errno));
         return 1;
     } else
